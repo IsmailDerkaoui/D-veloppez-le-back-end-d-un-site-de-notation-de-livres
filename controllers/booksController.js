@@ -2,7 +2,7 @@
 
 const Book = require("../models/books");
 const sharp = require("sharp");
-
+const path = require("path");
 
 const fs = require("fs");
 
@@ -62,28 +62,25 @@ exports.createBook = async (req, res, next) => {
     delete bookObject._id;
     delete bookObject.userId;
 
-    const originalPath = req.file.path;
-    const filename = `book-${Date.now()}.webp`;
-    const optimizedPath = path.join("images", filename);
+    const newFilename = `book-${Date.now()}.webp`;
+    const outputPath = path.join("images", newFilename);
 
-    // Optimiser l'image
-    await sharp(originalPath)
+    // Utiliser sharp sur le fichier bufferé par multer
+    await sharp(req.file.buffer)
       .resize(400, 600)
       .webp({ quality: 80 })
-      .toFile(optimizedPath);
-
-    // Supprime l'image originale
-    fs.unlinkSync(originalPath);
+      .toFile(outputPath);
 
     const book = new Book({
       ...bookObject,
       userId: req.auth.userId,
-      imageUrl: `${req.protocol}://${req.get("host")}/images/${filename}`,
+      imageUrl: `${req.protocol}://${req.get("host")}/images/${newFilename}`,
     });
 
     await book.save();
     res.status(201).json({ message: "Livre enregistré avec image optimisée !" });
   } catch (error) {
+    console.error("Erreur création livre :", error);
     res.status(400).json({ error });
   }
 };
@@ -101,43 +98,42 @@ exports.modifyBook = async (req, res, next) => {
       return res.status(401).json({ message: "Modification non autorisée." });
     }
 
-    let updatedData = req.file
+    // Récupère les nouvelles données
+    const updatedData = req.file
       ? JSON.parse(req.body.book)
       : req.body;
 
-    // S'il y a une nouvelle image
+    // Si une nouvelle image est envoyée
     if (req.file) {
-      const originalPath = req.file.path;
       const newFilename = `book-${Date.now()}.webp`;
       const optimizedPath = path.join("images", newFilename);
 
-      // Optimiser la nouvelle image
-      await sharp(originalPath)
+      // Convertit l'image avec sharp depuis le buffer
+      await sharp(req.file.buffer)
         .resize(400, 600)
         .webp({ quality: 80 })
         .toFile(optimizedPath);
 
-      // Supprimer l’image d’origine
-      fs.unlinkSync(originalPath);
-
-      // Supprimer l’ancienne image du serveur
+      // Supprimer l'ancienne image
       const oldFilename = book.imageUrl.split("/images/")[1];
-      fs.unlink(`images/${oldFilename}`, () => {});
+      fs.unlink(`images/${oldFilename}`, (err) => {
+        if (err) console.error("Erreur lors de la suppression de l'ancienne image :", err);
+      });
 
-      // Mettre à jour l’URL de l’image
+      // Mettre à jour l’URL de la nouvelle image
       updatedData.imageUrl = `${req.protocol}://${req.get("host")}/images/${newFilename}`;
     }
 
-    delete updatedData._id;
+    delete updatedData._id; // S'assurer que l'ID n'est pas modifié
 
     await Book.updateOne({ _id: req.params.id }, { ...updatedData, _id: req.params.id });
 
     res.status(200).json({ message: "Livre modifié avec succès !" });
   } catch (error) {
+    console.error("Erreur modification livre :", error);
     res.status(400).json({ error });
   }
 };
-
 /* SUPPRESSION */
 exports.deleteBook = (req, res, next) => {
   Book.findOne({ _id: req.params.id }).then((book) => {
